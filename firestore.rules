@@ -1,0 +1,41 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // /users/{uid} — one profile doc per account, only the owner can read/write it.
+    match /users/{userId} {
+      allow read, update, delete: if isOwner(userId);
+      allow create: if isOwner(userId);
+    }
+
+    // /forms/{formId} — owned by the creator; public read only when published.
+    match /forms/{formId} {
+      allow read: if resource.data.published == true || isOwner(resource.data.ownerId);
+      allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if isOwner(resource.data.ownerId);
+
+      // /forms/{formId}/responses/{responseId} — anyone can submit to a
+      // published form, but only the owner can read or manage responses.
+      match /responses/{responseId} {
+        allow create: if get(/databases/$(database)/documents/forms/$(formId)).data.published == true;
+        allow read, update, delete: if isOwner(
+          get(/databases/$(database)/documents/forms/$(formId)).data.ownerId
+        );
+      }
+    }
+
+    // Deny everything else by default.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
